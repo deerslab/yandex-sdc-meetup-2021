@@ -1,5 +1,6 @@
 import sys
 from collections import deque
+import heapq
 
 class Robot:
 
@@ -12,117 +13,84 @@ class Robot:
 
         self.f_row = None
         self.f_col = None
+        self.unavailable_cords = []
         self.path = deque()
 
 
-    def set_order(self, order):
-        self.order = order
+    def set_order(self, order, path):
 
-        self.path = self.get_path(order.s_row, order.s_col)
+        #path = self.get_path(order.s_row, order.s_col)
+
+        if order:
+            self.path = deque(path)
+            self.order = order
+            return True
+        else:
+            return False
 
 
-    def astar(self, start, end):
-        """Returns a list of tuples as a path from the given start to the given end in the given maze"""
+    def astar(self, start, goal):
+        def heuristic(start, goal):
+            s_row, s_col = start
+            f_row, f_col = goal
+            return abs(s_row - f_row) + abs(s_col - f_col)
 
-        class Node():
-            """A node class for A* Pathfinding"""
+        neighbors = [(0, 1), (0, -1), (1, 0), (-1, 0)]
 
-            def __init__(self, parent=None, position=None):
-                self.parent = parent
-                self.position = position
+        close_set = set()
+        came_from = {}
+        g_score = {start: 0}
+        f_score = {start: heuristic(start, goal)}
+        o_heap = []
 
-                self.g = 0
-                self.h = 0
-                self.f = 0
+        heapq.heappush(o_heap, (f_score[start], start))
 
-            def __eq__(self, other):
-                return self.position == other.position
+        while o_heap:
 
-        # Create start and end node
-        start_node = Node(None, start)
-        start_node.g = start_node.h = start_node.f = 0
-        end_node = Node(None, end)
-        end_node.g = end_node.h = end_node.f = 0
+            current = heapq.heappop(o_heap)[1]
 
-        # Initialize both open and closed list
-        open_list = []
-        closed_list = []
+            if current == goal:
+                data = []
+                while current in came_from:
+                    data.append(current)
+                    current = came_from[current]
+                return data[::-1]
 
-        # Add the start node
-        open_list.append(start_node)
-
-        # Loop until you find the end
-        while len(open_list) > 0:
-
-            # Get the current node
-            current_node = open_list[0]
-            current_index = 0
-            for index, item in enumerate(open_list):
-                if item.f < current_node.f:
-                    current_node = item
-                    current_index = index
-
-            # Pop current off open list, add to closed list
-            open_list.pop(current_index)
-            closed_list.append(current_node)
-
-            # Found the goal
-            if current_node == end_node:
-                path = []
-                current = current_node
-                while current is not None:
-                    path.append(current.position)
-                    current = current.parent
-                return path[::-1]  # Return reversed path
-
-            # Generate children
-            children = []
-            for new_position in [(0, -1), (0, 1), (-1, 0), (1, 0)]:  # Adjacent squares
-
-                # Get node position
-                node_position = (current_node.position[0] + new_position[0], current_node.position[1] + new_position[1])
-
-                # Make sure within range
-                if node_position[0] > (len(self.maze) - 1) or node_position[0] < 0 or node_position[1] > (
-                        len(self.maze[len(self.maze) - 1]) - 1) or node_position[1] < 0:
+            close_set.add(current)
+            for i, j in neighbors:
+                neighbor = current[0] + i, current[1] + j
+                tentative_g_score = g_score[current] + heuristic(current, neighbor)
+                if 0 <= neighbor[0] < len(self.maze):
+                    if 0 <= neighbor[1] < len(self.maze):
+                        if self.maze[neighbor[0]][neighbor[1]] == 1:
+                            continue
+                    else:
+                        # array bound y walls
+                        continue
+                else:
+                    # array bound x walls
                     continue
 
-                # Make sure walkable terrain
-                if self.maze[node_position[0]][node_position[1]] != 0:
+                if neighbor in close_set and tentative_g_score >= g_score.get(neighbor, 0):
                     continue
 
-                # Create new node
-                new_node = Node(current_node, node_position)
+                if tentative_g_score < g_score.get(neighbor, 0) or neighbor not in [
+                    i[1] for i in o_heap
+                ]:
+                    came_from[neighbor] = current
+                    g_score[neighbor] = tentative_g_score
+                    f_score[neighbor] = tentative_g_score + heuristic(neighbor, goal)
+                    heapq.heappush(o_heap, (f_score[neighbor], neighbor))
 
-                # Append
-                children.append(new_node)
-
-            # Loop through children
-            for child in children:
-
-                # Child is on the closed list
-                for closed_child in closed_list:
-                    if child == closed_child:
-                        continue
-
-                # Create the f, g, and h values
-                child.g = current_node.g + 1
-                child.h = ((child.position[0] - end_node.position[0]) ** 2) + (
-                            (child.position[1] - end_node.position[1]) ** 2)
-                child.f = child.g + child.h
-
-                # Child is already in the open list
-                for open_node in open_list:
-                    if child == open_node and child.g > open_node.g:
-                        continue
-
-                # Add the child to the open list
-                open_list.append(child)
+        return False
 
 
     def get_path(self, f_row, f_col):
         path = self.astar((self.row, self.col), (f_row, f_col))
-        path = path[1:]
+
+        if not path:
+            return None
+
         path = deque(path)
 
         self.f_row = f_row
@@ -179,15 +147,32 @@ class Robot:
             return abs(s_row - f_row) + abs(s_col-f_col)
 
         nearest_order = None
-        nearest_order_dist = len(self.maze)*2
+        nearest_order_path = None
+        nearest_order_dist = sys.maxsize
+        path = None
 
         for order_cords in orders.get_orders_cords():
+            if (self.row, self.col) == order_cords:
+                return (self.row, self.col), []
+
+            if order_cords in self.unavailable_cords:
+                continue
+
             order_dist = l1_dist(self.row, self.col, *order_cords)
+
             if order_dist < nearest_order_dist:
+
                 nearest_order = order_cords
+                #nearest_order_path = path
                 nearest_order_dist = order_dist
 
-        return nearest_order
+        if nearest_order:
+            path = self.astar((self.row, self.col), nearest_order)
+            if not path:
+                self.unavailable_cords.append(nearest_order)
+                return None, []
+
+        return nearest_order, path
 
 
 class Order:
@@ -233,6 +218,12 @@ class Orders:
 
 def get_robots(maze):
 
+    for i in range(len(maze)//2, len(maze)):
+        for j in range(len(maze)//2, len(maze)):
+            if maze[i][j] == 0:
+                robot = Robot(i, j, maze)
+                return [robot]
+
     for i in range(len(maze)):
         for j in range(len(maze)):
             if maze[i][j] == 0:
@@ -267,11 +258,11 @@ def run():
     T, D = readline()
 
     robots = get_robots(maze)
-    #print(len(robots), flush=True)
+    print(len(robots), flush=True)
 
     for robot in robots:
         row, col = robot.row, robot.col
-        #print(row+1, col+1, flush=True)
+        print(row+1, col+1, flush=True)
 
     orders = Orders()
     for _ in range(T):
@@ -285,14 +276,14 @@ def run():
         for _ in range(60):
             for robot in robots:
                 if not robot.order:
-                    nearest_order = robot.get_nearest_order(orders)
+                    nearest_order, path = robot.get_nearest_order(orders)
                     if nearest_order:
                         order = orders.release_order(*nearest_order)
-                        robot.set_order(order)
+                        robot.set_order(order, path)
 
                 iter_result.append(robot.tick())
 
-        #print("".join(iter_result), flush=True)
+        print("".join(iter_result), flush=True)
 
 
 if __name__ == "__main__":
