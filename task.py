@@ -1,6 +1,7 @@
 import sys
 from collections import deque
 import heapq
+import random
 
 class Robot:
 
@@ -30,59 +31,117 @@ class Robot:
 
 
     def astar(self, start, goal):
+        DIRECTIONS = ((1, 0, 1.0), (0, 1, 1.0), (-1, 0, 1.0), (0, -1, 1.0))
+
+        class Node:
+            def __init__(self, x, y, cost=float("inf"), h=0, parent=None):
+                self.x = x
+                self.y = y
+                self.cost = cost
+                self.h = h
+                self.parent = parent
+
+            def update(self, new_parent, new_cost):
+                self.parent = new_parent
+                self.cost = new_cost
+
+            def __repr__(self):
+                return "Node(x={x}, y={y}, cost={cost}, h={h}, parent={parent})".format(**self.__dict__)
+
+            @property
+            def priority(self):
+                return self.cost + self.h
+
+            @property
+            def pos(self):
+                return self.x, self.y
+
+            def __eq__(self, other):
+                return self.x == other.x and self.y == other.y
+
+            def __lt__(self, other):
+                """This allows Node to be used in the priority queue directly"""
+                return self.priority < other.priority
+
+        def make_grid(n_rows, n_cols, value):
+            """Make a n_rows x n_cols grid filled with an initial value"""
+            return [[value for _ in range(n_cols)] for _ in range(n_rows)]
+
+        def is_valid(x, y, x_max, y_max):
+            """Check the bounds and free space in the map"""
+            if 0 <= x < x_max and 0 <= y < y_max:
+                return self.maze[x][y] == 0
+            return False
+
         def heuristic(start, goal):
             s_row, s_col = start
             f_row, f_col = goal
             return abs(s_row - f_row) + abs(s_col - f_col)
 
-        neighbors = [(0, 1), (0, -1), (1, 0), (-1, 0)]
+        x_max, y_max = len(self.maze), len(self.maze[0])
 
-        close_set = set()
-        came_from = {}
-        g_score = {start: 0}
-        f_score = {start: heuristic(start, goal)}
-        o_heap = []
+        # None will later be used as sentinel for "no node here (yet)"
+        nodes = make_grid(x_max, y_max, None)
 
-        heapq.heappush(o_heap, (f_score[start], start))
+        start_node = Node(*start, cost=0, h=heuristic(start, goal))
+        nodes[start_node.x][start_node.y] = start_node
+        goal_node = Node(*goal)
+        nodes[goal_node.x][goal_node.y] = goal_node
 
-        while o_heap:
+        # openlist will be used a priority queue and has to be accessed using
+        # heappush and heappop from the heapq module. The Node class was modified
+        # to work well with this kind of datastructure.
+        openlist = []
+        heapq.heappush(openlist, start_node)
 
-            current = heapq.heappop(o_heap)[1]
-
-            if current == goal:
-                data = []
-                while current in came_from:
-                    data.append(current)
-                    current = came_from[current]
-                return data[::-1]
-
-            close_set.add(current)
-            for i, j in neighbors:
-                neighbor = current[0] + i, current[1] + j
-                tentative_g_score = g_score[current] + heuristic(current, neighbor)
-                if 0 <= neighbor[0] < len(self.maze):
-                    if 0 <= neighbor[1] < len(self.maze):
-                        if self.maze[neighbor[0]][neighbor[1]] == 1:
-                            continue
-                    else:
-                        # array bound y walls
-                        continue
-                else:
-                    # array bound x walls
+        found = False
+        while not found:
+            # get the node with the least overall cost (actual + heuristic)
+            current = heapq.heappop(openlist)
+            for direction in DIRECTIONS:
+                # compute new coordinates
+                x_n, y_n = current.x + direction[0], current.y + direction[1]
+                if not is_valid(x_n, y_n, x_max, y_max):
                     continue
+                # we have valid coordinates
+                if nodes[x_n][y_n] is None:
+                    nodes[x_n][y_n] = Node(
+                        x_n, y_n, h=heuristic((x_n, y_n), goal)
+                    )
+                # the new cost is made up if the current cost + transition
+                new_cost = nodes[current.x][current.y].cost + direction[2]
+                if new_cost < nodes[x_n][y_n].cost:
+                    # cool, we have found a faster path to this node, let's update
+                    # it's predecessor
+                    nodes[x_n][y_n].update(current.pos, new_cost)
+                    heapq.heappush(openlist, nodes[x_n][y_n])
+                    if nodes[x_n][y_n] == goal_node:
+                        # we're done, get out of here
+                        found = True
+                        break
+            # openlist is empty and we have not bailed out with found. seems like
+            # there is nothing we can do here
+            if not openlist:
+                return []
 
-                if neighbor in close_set and tentative_g_score >= g_score.get(neighbor, 0):
-                    continue
+        # backtracking
+        path = []
+        current = goal_node
+        # this is a little bit weird because I decided to store only the
+        # coordinates instead of the parent itself. Why? Because repr(node) is way
+        #  more readable that way ;-)
+        while True:
+            path.append(current.pos)
+            if current.parent is not None:
+                current = nodes[current.parent[0]][current.parent[1]]
+            else:
+                break
+        # the path is built by backtracking from the goal, so we have to reverse it
+        path = path[::-1]
+        if len(path)>0:
+            path = path[1:]
 
-                if tentative_g_score < g_score.get(neighbor, 0) or neighbor not in [
-                    i[1] for i in o_heap
-                ]:
-                    came_from[neighbor] = current
-                    g_score[neighbor] = tentative_g_score
-                    f_score[neighbor] = tentative_g_score + heuristic(neighbor, goal)
-                    heapq.heappush(o_heap, (f_score[neighbor], neighbor))
-
-        return False
+        return path
 
 
     def get_path(self, f_row, f_col):
@@ -218,17 +277,35 @@ class Orders:
 
 def get_robots(maze):
 
-    for i in range(len(maze)//2, len(maze)):
-        for j in range(len(maze)//2, len(maze)):
-            if maze[i][j] == 0:
-                robot = Robot(i, j, maze)
-                return [robot]
+    total_robots = (len(maze)*len(maze))//5000
+    total_robots = max(1, total_robots)
+    total_robots = min(100, total_robots)
 
-    for i in range(len(maze)):
-        for j in range(len(maze)):
+    robots = []
+
+    for _ in range(total_robots):
+        while _ in range(100):
+            i = random.randint(0, len(maze)-1)
+            j = random.randint(0, len(maze)-1)
             if maze[i][j] == 0:
                 robot = Robot(i, j, maze)
-                return [robot]
+                robots.append(robot)
+                break
+
+    if len(robots) == 0:
+        for i in range(len(maze)//2, len(maze)):
+            for j in range(len(maze)//2, len(maze)):
+                if maze[i][j] == 0:
+                    robot = Robot(i, j, maze)
+                    return [robot]
+
+        for i in range(len(maze)):
+            for j in range(len(maze)):
+                if maze[i][j] == 0:
+                    robot = Robot(i, j, maze)
+                    return [robot]
+    else:
+        return robots
 
 
 def readline():
@@ -272,9 +349,9 @@ def run():
             order = Order(s_row, s_col, f_row, f_col)
             orders.add_order(order)
 
-        iter_result = []
-        for _ in range(60):
-            for robot in robots:
+        for robot in robots:
+            iter_result = []
+            for _ in range(60):
                 if not robot.order:
                     nearest_order, path = robot.get_nearest_order(orders)
                     if nearest_order:
@@ -282,8 +359,7 @@ def run():
                         robot.set_order(order, path)
 
                 iter_result.append(robot.tick())
-
-        print("".join(iter_result), flush=True)
+            print("".join(iter_result), flush=True)
 
 
 if __name__ == "__main__":
