@@ -3,6 +3,8 @@ from collections import deque
 import heapq
 import random
 
+route_base = {}
+
 class Robot:
 
     def __init__(self, row, col, maze):
@@ -12,10 +14,21 @@ class Robot:
         self.has_goods = False
         self.order = None
 
-        self.f_row = None
-        self.f_col = None
         self.unavailable_cords = []
         self.path = deque()
+
+
+    def update_route_base(self):
+        if self.path and (len(self.path)>0):
+            goal = self.path[-1]
+
+            if (self.row, self.col) in route_base:
+                d = route_base.get((self.row, self.col))
+            else:
+                d = {}
+            d[goal] = list(self.path)
+
+            route_base[(self.row, self.col)] = d
 
 
     def set_order(self, order, path):
@@ -31,10 +44,15 @@ class Robot:
 
 
     def astar(self, start, goal):
-        DIRECTIONS = ((1, 0, 1.0), (0, 1, 1.0), (-1, 0, 1.0), (0, -1, 1.0))
+        DIRECTIONS = ((1, 0), (0, 1), (-1, 0), (0, -1))
+
+        if start in route_base:
+            if goal in route_base.get(start):
+
+                return deque(route_base.get(start).get(goal))
 
         class Node:
-            def __init__(self, x, y, cost=float("inf"), h=0, parent=None):
+            def __init__(self, x, y, cost=sys.maxsize, h=0, parent=None):
                 self.x = x
                 self.y = y
                 self.cost = cost
@@ -109,7 +127,7 @@ class Robot:
                         x_n, y_n, h=heuristic((x_n, y_n), goal)
                     )
                 # the new cost is made up if the current cost + transition
-                new_cost = nodes[current.x][current.y].cost + direction[2]
+                new_cost = nodes[current.x][current.y].cost + 1
                 if new_cost < nodes[x_n][y_n].cost:
                     # cool, we have found a faster path to this node, let's update
                     # it's predecessor
@@ -138,8 +156,20 @@ class Robot:
                 break
         # the path is built by backtracking from the goal, so we have to reverse it
         path = path[::-1]
+
         if len(path)>0:
             path = path[1:]
+
+
+        if len(path)>1:
+            if start in route_base:
+                d = route_base.get(start)
+            else:
+                d = {}
+            d[goal] = path
+            route_base[start] = d
+
+        path = deque(path)
 
         return path
 
@@ -150,10 +180,6 @@ class Robot:
         if not path:
             return None
 
-        path = deque(path)
-
-        self.f_row = f_row
-        self.f_col = f_col
         return path
 
 
@@ -324,6 +350,8 @@ def read_map(N):
         line = [0 if node=='.' else 1 for node in line]
         maze.append(line)
 
+    #maze = np.array(maze)
+
     return maze
 
 
@@ -351,14 +379,25 @@ def run():
 
         for robot in robots:
             iter_result = []
+            stop = False
             for _ in range(60):
-                if not robot.order:
-                    nearest_order, path = robot.get_nearest_order(orders)
-                    if nearest_order:
-                        order = orders.release_order(*nearest_order)
-                        robot.set_order(order, path)
 
-                iter_result.append(robot.tick())
+                if stop:
+                    iter_result.append('S')
+                else:
+
+                    if not robot.order:
+                        nearest_order, path = robot.get_nearest_order(orders)
+                        if nearest_order:
+                            order = orders.release_order(*nearest_order)
+                            robot.set_order(order, path)
+
+                    result = robot.tick()
+                    iter_result.append(result)
+                    robot.update_route_base()
+                    if result is 'S':
+                        stop = True
+
             print("".join(iter_result), flush=True)
 
 
